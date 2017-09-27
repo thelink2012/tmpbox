@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import argparse
 import string
 import random
 import mimetypes
@@ -102,7 +103,12 @@ def app_factory():
     return app
 
 
+parser = argparse.ArgumentParser(description="tmpbox server")
+parser.add_argument('--path')
+parser.add_argument('--port', type=int)
+
 if __name__ == "__main__":
     app = app_factory()
-    web.run_app(app)
+    args = parser.parse_args()
+    web.run_app(app, path=args.path, port=args.port)
 
