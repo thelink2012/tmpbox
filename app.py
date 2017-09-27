@@ -6,12 +6,13 @@ import mimetypes
 
 from aiohttp import web
 
-# TODO header nosniff
 
+# Configuration still hardcoded
 BASE_URI = 'tmp.thelink2012.xyz'
 PATH_STORAGE = os.path.abspath(os.path.split(__file__)[0] + '/files')
 MAX_UPLOAD_SIZE = 1024*1024*10   # 10MiB
 
+# Usage built based on configuration
 USAGE = f"""{BASE_URI}(1)
     
 NAME
@@ -41,6 +42,7 @@ def random_filename():
 
 
 async def upload_usage(request):
+    """Display usage of the tool."""
     return web.Response(text=USAGE)
 
 
@@ -90,6 +92,7 @@ async def download(request):
 
 
 def app_factory():
+    """Factory for aiohttp development tools."""
     os.makedirs(PATH_STORAGE, exist_ok=True)
     app = web.Application()
     app.router.add_post('/', upload)
