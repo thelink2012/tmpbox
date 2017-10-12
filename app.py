@@ -4,14 +4,16 @@ import argparse
 import string
 import random
 import mimetypes
+import glob
 
 from aiohttp import web
 
 
 # Configuration still hardcoded
 BASE_URI = 'tmp.thelink2012.xyz'
-PATH_STORAGE = os.path.abspath(os.path.split(__file__)[0] + '/files')
+PATH_STORAGE = os.path.abspath(os.path.join(os.path.split(__file__)[0], 'files'))
 MAX_UPLOAD_SIZE = 1024*1024*10   # 10MiB
+CHARSET = string.ascii_letters + string.digits
 
 # Usage built based on configuration
 USAGE = f"""{BASE_URI}(1)
@@ -38,8 +40,7 @@ SEE ALSO
 
 def random_filename():
     """Outputs a random filename for the uploaded file."""
-    charset = string.ascii_letters + string.digits
-    return ''.join([random.choice(charset) for _ in range(6)])
+    return ''.join([random.choice(CHARSET) for _ in range(6)])
 
 
 async def upload_usage(request):
@@ -75,14 +76,23 @@ async def download(request):
     This is a placeholder and using the web server as the
     content provider is a better alternative.
     """
+
     resource_name = request.match_info['resource']
     resource_path = f'{PATH_STORAGE}/{resource_name}' 
-    _, extension = os.path.splitext(resource_name)
+    basename, extension = os.path.splitext(resource_name)
 
+    # If there is no such file in the storage path, try finding one with the 
+    # same basename, as such the extension will only affect the mimetype.
     if not os.path.isfile(resource_path):
-        raise web.HTTPNotFound()
+        for entry in os.scandir(PATH_STORAGE):
+            if entry.name.startswith(basename):
+                if (len(entry.name) == len(basename) or entry.name[len(basename)] == '.'):
+                    resource_path = entry.path
+                    break
+        else:
+            raise web.HTTPNotFound()
 
-    content_type, encoding = mimetypes.guess_type(extension, strict=True)
+    content_type, _ = mimetypes.guess_type(resource_name, strict=True)
     if content_type is None:
         content_type = 'application/octet-stream'
 
@@ -94,6 +104,7 @@ async def download(request):
 
 def app_factory():
     """Factory for aiohttp development tools."""
+    assert not any(c in CHARSET for c in ['/', '\\', '.'])
     os.makedirs(PATH_STORAGE, exist_ok=True)
     app = web.Application()
     app.router.add_post('/', upload)

@@ -1,2 +1,2 @@
-aiohttp
+-e git+git://github.com/thelink2012/aiohttp@fix-content-type-2.2#egg=aiohttp
 cchardet
