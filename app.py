@@ -4,48 +4,48 @@ import argparse
 import string
 import random
 import mimetypes
-import glob
 
 from aiohttp import web
 
 
-# Configuration still hardcoded
-BASE_URI = 'tmp.thelink2012.xyz'
-PATH_STORAGE = os.path.abspath(os.path.join(os.path.split(__file__)[0], 'files'))
-MAX_UPLOAD_SIZE = 1024*1024*10   # 10MiB
-CHARSET = string.ascii_letters + string.digits
-
-# Usage built based on configuration
-USAGE = f"""{BASE_URI}(1)
+USAGE = """{HOST}(1)
     
 NAME
-        {BASE_URI} -- temporary box
+        {HOST} -- temporary box
 
 SYNOPSIS
-        curl -sF u=@file {BASE_URI}
+        curl -sF u=@file {URI}
 
 EXAMPLES
-        $ curl -sF u=@/path/to/file.png {BASE_URI}
-        $ curl -sF u=@- < /path/to/file.png
-        $ echo hi | curl -sF u=@-
+        $ curl -sF u=@/path/to/file.png {URI}
+        $ curl -sF u=@- {URI} < /path/to/file.png
+        $ echo hi | curl -sF u=@- {URI}
         ^D
 
 CAVEATS
         size limit is {MAX_UPLOAD_SIZE} bytes
-
-SEE ALSO
-        p.iotek.org
 """
 
 
-def random_filename():
+def random_filename(app):
     """Outputs a random filename for the uploaded file."""
-    return ''.join([random.choice(CHARSET) for _ in range(6)])
+    return ''.join([random.choice(app['charset']) for _ in range(6)])
 
 
-async def upload_usage(request):
+def uri(request):
+    """Gets the URI for the application."""
+    if request.app['https']:
+        return 'https://' + request.headers['Host']
+    else:
+        return 'http://' + request.headers['Host']
+
+
+async def help(request):
     """Display usage of the tool."""
-    return web.Response(text=USAGE)
+    max_size = request.app['max_upload_size']
+    return web.Response(text=USAGE.format(HOST=request.headers['Host'],
+                                          URI=uri(request),
+                                          MAX_UPLOAD_SIZE=max_size))
 
 
 async def upload(request):
@@ -53,19 +53,20 @@ async def upload(request):
     reader = await request.multipart()
     files_uploaded = []
     total_size = 0
+    max_upload_size = request.app['max_upload_size']
     async for part in reader:
         _, extension = os.path.splitext(part.filename or '')
-        resource_name = random_filename() + extension
-        with open(os.path.join(PATH_STORAGE, resource_name), 'wb') as f:
+        resource_name = random_filename(request.app) + extension
+        with open(os.path.join(request.app['storage_path'], resource_name), 'wb') as f:
             while True:
-                if total_size >= MAX_UPLOAD_SIZE:
+                if total_size >= max_upload_size:
                     raise web.HTTPRequestEntityTooLarge();
                 chunk = await part.read_chunk()
                 if not chunk:
                     break
                 total_size += len(chunk)
                 f.write(chunk)
-        files_uploaded.append(f'{BASE_URI}/{resource_name}')
+        files_uploaded.append(f'{uri(request)}/{resource_name}')
     return web.Response(text='\n'.join(files_uploaded))
 
 
@@ -78,13 +79,13 @@ async def download(request):
     """
 
     resource_name = request.match_info['resource']
-    resource_path = f'{PATH_STORAGE}/{resource_name}' 
+    resource_path = os.path.join(request.app['storage_path'], resource_name)
     basename, extension = os.path.splitext(resource_name)
 
     # If there is no such file in the storage path, try finding one with the 
     # same basename, as such the extension will only affect the mimetype.
     if not os.path.isfile(resource_path):
-        for entry in os.scandir(PATH_STORAGE):
+        for entry in os.scandir(request.app['storage_path']):
             if entry.name.startswith(basename):
                 if (len(entry.name) == len(basename) or entry.name[len(basename)] == '.'):
                     resource_path = entry.path
@@ -104,22 +105,43 @@ async def download(request):
 
 def app_factory():
     """Factory for aiohttp development tools."""
-    assert not any(c in CHARSET for c in ['/', '\\', '.'])
-    os.makedirs(PATH_STORAGE, exist_ok=True)
     app = web.Application()
     app.router.add_post('/', upload)
-    app.router.add_get('/', upload_usage)
+    app.router.add_get('/', help)
     res = app.router.add_resource('/{resource}')
     res.add_route('GET', download);
     return app
 
 
+
 parser = argparse.ArgumentParser(description="tmpbox server")
-parser.add_argument('--path')
-parser.add_argument('--port', type=int)
+parser.add_argument('--path', help="Opens a Unix Socket at path")
+parser.add_argument('--port', type=int, help="Opens a connection at port")
+parser.add_argument('--https', action='store_true', help="Use HTTPS URLs")
+parser.add_argument('--max-upload', help="The maximum size of a file in bytes",
+                                    type=int, default=10*1024*1024)  # 10MiB
+parser.add_argument('--charset', help="Set of characters used to form a id",
+                                 default=string.ascii_letters + string.digits)
+parser.add_argument('--storage-path', help="Path to store the uploaded files",
+                                      default='files')
 
 if __name__ == "__main__":
     app = app_factory()
     args = parser.parse_args()
+
+    app['https'] = args.https
+    app['max_upload_size'] = args.max_upload
+    app['charset'] = args.charset
+
+    if os.path.isabs(args.storage_path):
+        app['storage_path'] = args.storage_path
+    else:
+        this_dir = os.path.join(os.path.split(__file__)[0])
+        joined_path = os.path.join(this_dir, args.storage_path)
+        app['storage_path'] = os.path.abspath(joined_path)
+
+    assert not any(c in app['charset'] for c in ['/', '\\', '.'])
+    os.makedirs(app['storage_path'], exist_ok=True)
+
     web.run_app(app, path=args.path, port=args.port)
 
